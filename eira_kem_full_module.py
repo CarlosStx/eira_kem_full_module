@@ -11,45 +11,34 @@ from Crypto.Util.Padding import pad, unpad
 # ==========================
 
 def generate_keypair():
-    sk = os.urandom(64)  # Secreto privado
+    sk = os.urandom(64)
     h = SHA3_512.new(sk).digest()
-    pk = h[:32]          # Parte pública
+    pk = h[:32]
     return pk, sk
 
 def encapsulate(pk, sk):
-    r = os.urandom(32)  # Entropía temporal
-    # Derivar salt de r, sk y pk
-    salt = SHA3_512.new(sk + r + pk).digest()
-
-    # Derivar clave simétrica K usando HKDF con salt
-    K = HKDF(master=r + pk, key_len=32, salt=salt, hashmod=SHA256)
-
-    nonce = get_random_bytes(12)
+    r = os.urandom(32)
+    material = SHA3_512.new(sk + r + pk).digest()
+    K = HKDF(master=material, key_len=32, salt=None, hashmod=SHA256)
+    nonce = os.urandom(12)
     cipher = AES.new(K, AES.MODE_GCM, nonce=nonce)
     plaintext = b"EIRA-ENCAPSULATED"
     ciphertext, tag = cipher.encrypt_and_digest(plaintext)
-
-    encapsulated_data = {
+    capsule = {
         "r": r,
         "nonce": nonce,
         "ciphertext": ciphertext,
         "tag": tag
     }
+    return capsule, K
 
-    return encapsulated_data, K
-
-def decapsulate(sk, encapsulated_data):
-    pk = SHA3_512.new(sk).digest()[:32]
-    r = encapsulated_data["r"]
-    salt = SHA3_512.new(sk + r + pk).digest()
-
-    # Regenerar K con los mismos parámetros
-    K = HKDF(master=r + pk, key_len=32, salt=salt, hashmod=SHA256)
-    cipher = AES.new(K, AES.MODE_GCM, nonce=encapsulated_data["nonce"])
-    plaintext = cipher.decrypt_and_verify(
-        encapsulated_data["ciphertext"],
-        encapsulated_data["tag"]
-    )
+def decapsulate(sk, capsule):
+    h = SHA3_512.new(sk).digest()
+    pk = h[:32]
+    material = SHA3_512.new(sk + capsule["r"] + pk).digest()
+    K = HKDF(master=material, key_len=32, salt=None, hashmod=SHA256)
+    cipher = AES.new(K, AES.MODE_GCM, nonce=capsule["nonce"])
+    plaintext = cipher.decrypt_and_verify(capsule["ciphertext"], capsule["tag"])
     if plaintext != b"EIRA-ENCAPSULATED":
         raise ValueError("Etiqueta no válida")
     return K
